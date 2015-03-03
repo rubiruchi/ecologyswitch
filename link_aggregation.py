@@ -18,11 +18,11 @@ if '__main__' == __name__:
     h3 = net.addHost('h3', mac='00:00:00:00:00:23')
     h4 = net.addHost('h4', mac='00:00:00:00:00:24')
 
-    TCLink(s1, h1, bw=10)
-    TCLink(s1, h1, bw=10)
-    Link(s1, h2)
-    Link(s1, h3)
-    Link(s1, h4)
+    TCLink(s1, h1, bw=1)
+    TCLink(s1, h1, bw=1)
+    TCLink(s1, h2, bw=1)
+    TCLink(s1, h3, bw=1)
+    TCLink(s1, h4, bw=1)
 
     net.build()
     c0.start()

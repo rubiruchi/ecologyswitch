@@ -15,7 +15,8 @@ class SimpleMonitor(simple_switch_13.SimpleSwitch13):
         self.monitor_thread = hub.spawn(self._monitor)
         self.rx_bytes = [0,0]
         self.tx_bytes = [0,0]
-        self.utilization= [0,0]
+        self.utilization= [0.0,0.0]
+        self.monitoring_time = 5;
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
@@ -34,7 +35,7 @@ class SimpleMonitor(simple_switch_13.SimpleSwitch13):
         while True:
             for dp in self.datapaths.values():
                 self._request_stats(dp)
-            hub.sleep(10)
+            hub.sleep(self.monitoring_time)
 
     def _request_stats(self, datapath):
         self.logger.debug('send stats request: %016x', datapath.id)
@@ -64,7 +65,9 @@ class SimpleMonitor(simple_switch_13.SimpleSwitch13):
                 
                 deltatraffic= (stat.rx_bytes - self.rx_bytes[stat.port_no-1]) + (stat.tx_bytes - self.tx_bytes[stat.port_no-1])
                 self.logger.info('\nDelta traffic port 1: %f \n', deltatraffic )
-                self.utilization[stat.port_no - 1] = deltatraffic * 8 * 100 / (10 * 10*10^6)
+                self.logger.info('\n delta rx: %d \n', stat.rx_bytes - self.rx_bytes[stat.port_no-1] )
+                self.logger.info('\n delta tx: %f \n', stat.tx_bytes - self.tx_bytes[stat.port_no-1] )
+                self.utilization[stat.port_no - 1] = deltatraffic * 8 * 100 / (self.monitoring_time * 1*1000000.0) 
                 self.logger.info('\nutilization port 1: %f', self.utilization[stat.port_no-1] )
                 self.tx_bytes [stat.port_no - 1] = stat.tx_bytes
                 self.rx_bytes [stat.port_no - 1] = stat.rx_bytes
