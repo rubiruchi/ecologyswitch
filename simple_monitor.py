@@ -9,6 +9,8 @@ from ryu.lib import hub
 #import urllib
 #import urllib2
 import requests
+import json
+import ast
 
 class SimpleMonitor(simple_switch_13.SimpleSwitch13):
 
@@ -21,11 +23,13 @@ class SimpleMonitor(simple_switch_13.SimpleSwitch13):
         self.utilization= [0.0,0.0]
         self.ports = [1,1]
         self.monitoring_time = 5;
+        self.macsOfSwitch={}
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
     def _state_change_handler(self, ev):
         datapath = ev.datapath
+        self.getMacsOfSwitch()
         if ev.state == MAIN_DISPATCHER:
             if not datapath.id in self.datapaths:
                 self.logger.debug('register datapath: %016x', datapath.id)
@@ -77,6 +81,7 @@ class SimpleMonitor(simple_switch_13.SimpleSwitch13):
                 self.rx_bytes [stat.port_no - 1] = stat.rx_bytes
                 
 
+
                 self.logger.info("\nrerouting\n")
                 self.reroute(self.mac_to_port)
 
@@ -102,23 +107,30 @@ class SimpleMonitor(simple_switch_13.SimpleSwitch13):
           'config': config,
           'mask' : 0
         }
-        response = requests.post(url,params=payload)
+        response = requests.post(url,data=payload)
         self.logger.info(response.text)
         
 
+    def getMacsOfSwitch(self):
+        url = 'http://localhost:8080/stats/portdesc/1'
+        response = requests.get(url)
+        temp2={}
+        if (response.text):
+            portdescarrays = ast.literal_eval(response.text)["1"]
+            for temp in portdescarrays:
+                temp2[temp['port_no']] = temp['hw_addr']
+            self.macsOfSwitch = temp2
 
     def reroute(self,mac_to_port):
-
+        self.logger.info(mac_to_port)
         hit = 0
         mac_h1 = ""
         for mac, port in mac_to_port[1].items():
-            if port == 1:
-                hit = hit + 1
-                if hit==1:
-                    mac_h1 = mac
-                    self.logger.info(mac_h1)
-                    hit=0
-                    break
+            if port == 1 and not(mac in self.macsOfSwitch.values()) :
+                mac_h1 = mac
+                self.logger.info(mac_h1)
+                
+                break
 
 
         #if port1 and port2 is active:
@@ -143,10 +155,11 @@ class SimpleMonitor(simple_switch_13.SimpleSwitch13):
                     {
                         "type":"OUTPUT",
                         "port": port_output
+
                     }
               ]
             }
             
-            response = requests.post(url,params=payload)
+            response = requests.post(url,data=json.dumps(payload))
             self.logger.info(response.text)
 
