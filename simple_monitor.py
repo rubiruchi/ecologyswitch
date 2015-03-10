@@ -8,9 +8,7 @@ from ryu.lib import hub
 
 #import urllib
 #import urllib2
-import requests
-import json
-import ast
+
 
 class SimpleMonitor(simple_switch_13.SimpleSwitch13):
 
@@ -23,17 +21,20 @@ class SimpleMonitor(simple_switch_13.SimpleSwitch13):
         self.utilization= [0.0,0.0]
         self.ports = [1,1]
         self.monitoring_time = 5;
-        self.macsOfSwitch={}
+        #self.macsOfSwitch={}
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
     def _state_change_handler(self, ev):
         datapath = ev.datapath
-        self.getMacsOfSwitch()
+        
         if ev.state == MAIN_DISPATCHER:
             if not datapath.id in self.datapaths:
                 self.logger.debug('register datapath: %016x', datapath.id)
                 self.datapaths[datapath.id] = datapath
+                #self.getMacsOfSwitch()
+                #self.routeLoadBalance('10.0.0.1')
+                #print self.mac_to_port
         elif ev.state == DEAD_DISPATCHER:
             if datapath.id in self.datapaths:
                 self.logger.debug('unregister datapath: %016x', datapath.id)
@@ -80,10 +81,10 @@ class SimpleMonitor(simple_switch_13.SimpleSwitch13):
                 self.tx_bytes [stat.port_no - 1] = stat.tx_bytes
                 self.rx_bytes [stat.port_no - 1] = stat.rx_bytes
                 
+                
 
-
-                self.logger.info("\nrerouting\n")
-                self.reroute(self.mac_to_port)
+                #self.logger.info("\nrerouting\n")
+                #self.reroute(self.mac_to_port)
 
                 '''
                 if ( (port2 is down) and port1_util > 70 ) :
@@ -110,7 +111,7 @@ class SimpleMonitor(simple_switch_13.SimpleSwitch13):
         response = requests.post(url,data=payload)
         self.logger.info(response.text)
         
-
+    """
     def getMacsOfSwitch(self):
         url = 'http://localhost:8080/stats/portdesc/1'
         response = requests.get(url)
@@ -120,6 +121,76 @@ class SimpleMonitor(simple_switch_13.SimpleSwitch13):
             for temp in portdescarrays:
                 temp2[temp['port_no']] = temp['hw_addr']
             self.macsOfSwitch = temp2
+    """
+
+
+    def routeLoadBalance(self,ipToLoadBalance):
+        url = 'http://localhost:8080/stats/flowentry/add'
+        for i in range(3,5):
+            #port_output =  1
+            
+            if i % 2 == 0:
+                #port_output = 2
+                payload = {
+                  "dpid": 1,
+                  "table_id": 0,
+                  "priority": 32768,
+                  "match": {
+                     "in_port": i,
+                     "nw_dst": ipToLoadBalance,
+                     "dl_type": 2048
+                        },
+                  "actions":[
+                        {
+                            #"type":"OUTPUT",
+                            #"port": port_output,
+                            "type": "SET_FIELD",
+                            "field": "ipv4_dst",
+                            "value": "10.0.0.7"
+
+                        },
+                        {
+                            "type":"OUTPUT",
+                            "port": 2,
+                        }
+                  ]
+                }
+
+                response = requests.post(url,data=json.dumps(payload))
+                self.logger.info(response.text)
+
+        
+        payload = {
+                  "dpid": 1,
+                  "table_id": 0,
+                  "priority": 32768,
+                  "match": {
+                     "in_port": 2,
+                     "nw_dst": "10.0.0.0/8",
+                     "dl_type": 2048
+                        },
+                  "actions":[
+                        {
+                            #"type":"OUTPUT",
+                            #"port": port_output,
+                            "type": "SET_FIELD",
+                            "field": "ipv4_src",
+                            "value": "10.0.0.1"
+
+                        },
+                        {
+                            "type": "GOTO_TABLE",
+                            "table_id": 0
+                        }
+                        
+                  ]
+                }
+        response = requests.post(url,data=json.dumps(payload))
+        self.logger.info(response.text) 
+        
+                
+
+
 
     def reroute(self,mac_to_port):
         self.logger.info(mac_to_port)
@@ -129,7 +200,13 @@ class SimpleMonitor(simple_switch_13.SimpleSwitch13):
             if port == 1 and not(mac in self.macsOfSwitch.values()) :
                 mac_h1 = mac
                 self.logger.info(mac_h1)
-                
+                break
+
+        mac_h2 = ""
+        for mac, port in mac_to_port[1].items():
+            if port == 2 and not(mac in self.macsOfSwitch.values()) :
+                mac_h2 = mac
+                self.logger.info(mac_h2)
                 break
 
 
@@ -154,8 +231,8 @@ class SimpleMonitor(simple_switch_13.SimpleSwitch13):
               "actions":[
                     {
                         "type":"OUTPUT",
-                        "port": port_output
-
+                        "port": port_output,
+                        "dl_dst": mac_h2
                     }
               ]
             }

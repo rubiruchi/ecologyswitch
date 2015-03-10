@@ -18,3 +18,6 @@ app:
 
 
 
+
+1. find the possible paths.
+2. 
