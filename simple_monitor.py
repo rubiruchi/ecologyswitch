@@ -8,7 +8,9 @@ from ryu.lib import hub
 
 #import urllib
 #import urllib2
-
+import requests
+import json
+import ast
 
 class SimpleMonitor(simple_switch_13.SimpleSwitch13):
 
@@ -35,15 +37,92 @@ class SimpleMonitor(simple_switch_13.SimpleSwitch13):
                 #self.getMacsOfSwitch()
                 #self.routeLoadBalance('10.0.0.1')
                 #print self.mac_to_port
+                self.noBroadcastOnPort(2)
+                self.installBalancingRoutes()
+
         elif ev.state == DEAD_DISPATCHER:
             if datapath.id in self.datapaths:
                 self.logger.debug('unregister datapath: %016x', datapath.id)
                 del self.datapaths[datapath.id]
 
+    def noBroadcastOnPort(self,port=2):
+        eth_dsts=["ff:ff:ff:ff:ff:ff","33:33:00:00:00:16","33:33:00:00:00:02"]
+        #eth_dsts=["ff:ff:ff:ff:ff:ff","33:33:00:00:00:00/ff::ff"]
+        for i in range(0,len(eth_dsts)):
+            url = 'http://localhost:8080/stats/flowentry/add'
+            payload = {
+                      "dpid": 1,
+                      "table_id": 0,
+                      "priority": 32768,
+                      "match": {
+                         "in_port": port,
+                         "eth_dst": eth_dsts[i]
+                            },
+                      "actions":[
+                            
+                      ]
+                    }
+            response = requests.post(url,data=json.dumps(payload))
+            self.logger.info(response.text)
+
+            payload = {
+                      "dpid": 2,
+                      "table_id": 0,
+                      "priority": 32768,
+                      "match": {
+                         "in_port": port,
+                         "eth_dst": eth_dsts[i]
+                            },
+                      "actions":[
+                      ]
+                    }
+            response = requests.post(url,data=json.dumps(payload))
+            self.logger.info(response.text)
+
+    def installBalancingRoutes(self,remove=False):
+        out_port = 2
+        if remove:
+            out_port = 1
+        url = 'http://localhost:8080/stats/flowentry/add'
+        payload = {
+                  "dpid": 2,
+                  "table_id": 0,
+                  "priority": 32768,
+                  "match": {
+                     "eth_dst": "00:00:00:00:00:12",
+                     "in_port":4
+                        },
+                  "actions":[ 
+                     {"type":"OUTPUT",
+                     "port": out_port}
+                  ]
+                }
+        response = requests.post(url,data=json.dumps(payload))
+        self.logger.info(response.text)
+
+    
+        url = 'http://localhost:8080/stats/flowentry/add'
+        payload = {
+                  "dpid": 1,
+                  "table_id": 0,
+                  "priority": 32768,
+                  "match": {
+                     "eth_dst": "00:00:00:00:00:24",
+                     "in_port":4
+                        },
+                  "actions":[
+                     {"type":"OUTPUT",
+                     "port": out_port}
+                  ]
+                }
+        response = requests.post(url,data=json.dumps(payload))
+        self.logger.info(response.text)
+
     def _monitor(self):
         while True:
             for dp in self.datapaths.values():
-                self._request_stats(dp)
+                if dp.id == 1:
+                    self._request_stats(dp)
             hub.sleep(self.monitoring_time)
 
     def _request_stats(self, datapath):
@@ -51,6 +130,7 @@ class SimpleMonitor(simple_switch_13.SimpleSwitch13):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
+        #request port stats
         req = parser.OFPPortStatsRequest(datapath, 0, ofproto.OFPP_ANY)
         datapath.send_msg(req)
 
@@ -73,170 +153,53 @@ class SimpleMonitor(simple_switch_13.SimpleSwitch13):
                                  stat.tx_packets, stat.tx_bytes, stat.tx_errors)
                 
                 deltatraffic= (stat.rx_bytes - self.rx_bytes[stat.port_no-1]) + (stat.tx_bytes - self.tx_bytes[stat.port_no-1])
-                self.logger.info('\nDelta traffic port 1: %f \n', deltatraffic )
-                self.logger.info('\n delta rx: %d \n', stat.rx_bytes - self.rx_bytes[stat.port_no-1] )
-                self.logger.info('\n delta tx: %f \n', stat.tx_bytes - self.tx_bytes[stat.port_no-1] )
                 self.utilization[stat.port_no - 1] = deltatraffic * 8 * 100 / (self.monitoring_time * 1*1000000.0) 
                 self.logger.info('\nutilization port 1: %f', self.utilization[stat.port_no-1] )
                 self.tx_bytes [stat.port_no - 1] = stat.tx_bytes
                 self.rx_bytes [stat.port_no - 1] = stat.rx_bytes
-                
-                
 
-                #self.logger.info("\nrerouting\n")
-                #self.reroute(self.mac_to_port)
-
-                '''
-                if ( (port2 is down) and port1_util > 70 ) :
-                    #enable port2
-                    self._modify_port(2,0)
-                    self.ports[1]=1
-                    self.reroute()
-                else if ( (port2 is up) and port1_util + port2_util < 90) :
-                    self.reroute()
-                    #disable port2
-                    self._modify_port(2,8)
-                    self.ports[1]=0
-                '''
+                #if not(self.isPortUp('1',2)) and self.utilization[stat.port_1]+self.utilization[stat.port_2] > 90:
+                if not(self.isPortUp('1',2)) and self.utilization[stat.port_no-1] > 70:
+                    #enable port 2 on both switches
+                    self.logger.info("enabling port 2 and load balancing")
+                    self._modify_port('1',2,0,0xFFFFFFFF)
+                    self._modify_port('2',2,0,0xFFFFFFFF)
+                    self.installBalancingRoutes()
+                elif self.isPortUp('1',2) and (self.utilization[stat.port_no-1] < 80):
+                    self.logger.info("remove load balancing and disable port 2")
+                    self.installBalancingRoutes(True)
+                    self._modify_port('1',2,1<<0,0xFFFFFFFF)
+                    self._modify_port('2',2,1<<0,0xFFFFFFFF)
+            
 
 
-    def _modify_port(self,port_no,config):
+    def _modify_port(self,dpid,port_no,config,mask):
         url = 'http://localhost:8080/stats/portdesc/modify'
         payload = {
-          'dpid': 1,
+          'dpid': dpid ,
           'port_no': port_no,
           'config': config,
-          'mask' : 0
+          'mask' : mask
         }
-        response = requests.post(url,data=payload)
-        self.logger.info(response.text)
-        
-    """
-    def getMacsOfSwitch(self):
-        url = 'http://localhost:8080/stats/portdesc/1'
-        response = requests.get(url)
-        temp2={}
-        if (response.text):
-            portdescarrays = ast.literal_eval(response.text)["1"]
-            for temp in portdescarrays:
-                temp2[temp['port_no']] = temp['hw_addr']
-            self.macsOfSwitch = temp2
-    """
-
-
-    def routeLoadBalance(self,ipToLoadBalance):
-        url = 'http://localhost:8080/stats/flowentry/add'
-        for i in range(3,5):
-            #port_output =  1
-            
-            if i % 2 == 0:
-                #port_output = 2
-                payload = {
-                  "dpid": 1,
-                  "table_id": 0,
-                  "priority": 32768,
-                  "match": {
-                     "in_port": i,
-                     "nw_dst": ipToLoadBalance,
-                     "dl_type": 2048
-                        },
-                  "actions":[
-                        {
-                            #"type":"OUTPUT",
-                            #"port": port_output,
-                            "type": "SET_FIELD",
-                            "field": "ipv4_dst",
-                            "value": "10.0.0.7"
-
-                        },
-                        {
-                            "type":"OUTPUT",
-                            "port": 2,
-                        }
-                  ]
-                }
-
-                response = requests.post(url,data=json.dumps(payload))
-                self.logger.info(response.text)
-
-        
-        payload = {
-                  "dpid": 1,
-                  "table_id": 0,
-                  "priority": 32768,
-                  "match": {
-                     "in_port": 2,
-                     "nw_dst": "10.0.0.0/8",
-                     "dl_type": 2048
-                        },
-                  "actions":[
-                        {
-                            #"type":"OUTPUT",
-                            #"port": port_output,
-                            "type": "SET_FIELD",
-                            "field": "ipv4_src",
-                            "value": "10.0.0.1"
-
-                        },
-                        {
-                            "type": "GOTO_TABLE",
-                            "table_id": 0
-                        }
-                        
-                  ]
-                }
         response = requests.post(url,data=json.dumps(payload))
-        self.logger.info(response.text) 
-        
-                
+        self.logger.info(response.text)
+        self.logger.info(response)
 
+    def isPortUp(self,dpid,port_no):
+        url = "http://localhost:8080/stats/portdesc/"+dpid
+        response = requests.get(url)
+        if (response.text):
+            portdescarrays = ast.literal_eval(response.text)[dpid]
+            #print portdescarrays
+            for entry in portdescarrays:
+                if entry['port_no'] == port_no:
+                    print entry['config']
+                    if entry['config'] == 0:
+                        return True
+                    else:
+                        return False
+                    break
 
+    
 
-    def reroute(self,mac_to_port):
-        self.logger.info(mac_to_port)
-        hit = 0
-        mac_h1 = ""
-        for mac, port in mac_to_port[1].items():
-            if port == 1 and not(mac in self.macsOfSwitch.values()) :
-                mac_h1 = mac
-                self.logger.info(mac_h1)
-                break
-
-        mac_h2 = ""
-        for mac, port in mac_to_port[1].items():
-            if port == 2 and not(mac in self.macsOfSwitch.values()) :
-                mac_h2 = mac
-                self.logger.info(mac_h2)
-                break
-
-
-        #if port1 and port2 is active:
-            #modify the flows
-            #set so that traffic from odd ports come to port 1, and from even ports come to port 2
-        url = 'http://localhost:8080/stats/flowentry/modify'
-        port_output =  1
-        for i in range(1,5):
-
-            if i % 2 == 0:
-                port_output = 2
-            else:
-                port_output = 1
-
-            payload = {
-              "dpid": 1,
-              "match":{
-                     "dl_dst": mac_h1,
-                     "in_port": i
-                },
-              "actions":[
-                    {
-                        "type":"OUTPUT",
-                        "port": port_output,
-                        "dl_dst": mac_h2
-                    }
-              ]
-            }
-            
-            response = requests.post(url,data=json.dumps(payload))
-            self.logger.info(response.text)
 

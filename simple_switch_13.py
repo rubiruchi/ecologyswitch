@@ -38,6 +38,8 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.mach2=""
         self.routeInstalled = False
 
+
+
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         datapath = ev.msg.datapath
@@ -60,8 +62,8 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.macsOfSwitch2 = self.getMacsOfSwitch("2")
         print self.macsOfSwitch1
         print self.macsOfSwitch2
-        self.noBroadcastOnPort(2)
-        self.installBalancingRoutes()
+        #self.noBroadcastOnPort(2)
+        #self.installBalancingRoutes()
 
 
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
@@ -120,14 +122,16 @@ class SimpleSwitch13(app_manager.RyuApp):
         response = requests.get(url)
         temp2={}
         if (response.text):
-            print response.text
             portdescarrays = ast.literal_eval(response.text)[dpid]
             for temp in portdescarrays:
                 temp2[temp['port_no']] = temp['hw_addr']
             return temp2
 
 
-    def installBalancingRoutes(self):
+    def installBalancingRoutes(self,remove=False):
+        out_port = 2
+        if remove:
+            out_port = 1
         url = 'http://localhost:8080/stats/flowentry/add'
         payload = {
                   "dpid": 2,
@@ -139,7 +143,7 @@ class SimpleSwitch13(app_manager.RyuApp):
                         },
                   "actions":[ 
                      {"type":"OUTPUT",
-                     "port": 2}
+                     "port": out_port}
                   ]
                 }
         response = requests.post(url,data=json.dumps(payload))
@@ -157,7 +161,7 @@ class SimpleSwitch13(app_manager.RyuApp):
                         },
                   "actions":[
                      {"type":"OUTPUT",
-                     "port": 2}
+                     "port": out_port}
                   ]
                 }
         response = requests.post(url,data=json.dumps(payload))
