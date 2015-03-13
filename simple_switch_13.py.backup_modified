@@ -22,12 +22,23 @@ from ryu.lib.packet import packet
 from ryu.lib.packet import ethernet
 
 
+import requests
+import json
+import ast
+
 class SimpleSwitch13(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
         super(SimpleSwitch13, self).__init__(*args, **kwargs)
         self.mac_to_port = {}
+        self.macsOfSwitch1={}
+        self.macsOfSwitch2={}
+        self.mach1=""
+        self.mach2=""
+        self.routeInstalled = False
+
+
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -47,6 +58,13 @@ class SimpleSwitch13(app_manager.RyuApp):
                                           ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions)
 
+        self.macsOfSwitch1 = self.getMacsOfSwitch("1")
+        self.macsOfSwitch2 = self.getMacsOfSwitch("2")
+        print self.macsOfSwitch1
+        print self.macsOfSwitch2
+        #self.noBroadcastOnPort(2)
+        #self.installBalancingRoutes()
+
 
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
         ofproto = datapath.ofproto
@@ -63,6 +81,91 @@ class SimpleSwitch13(app_manager.RyuApp):
                                     match=match, instructions=inst)
         datapath.send_msg(mod)
 
+    def noBroadcastOnPort(self,port=2):
+        eth_dsts=["ff:ff:ff:ff:ff:ff","33:33:00:00:00:16","33:33:00:00:00:02"]
+        for i in range(0,3):
+            url = 'http://localhost:8080/stats/flowentry/add'
+            payload = {
+                      "dpid": 1,
+                      "table_id": 0,
+                      "priority": 32768,
+                      "match": {
+                         "in_port": port,
+                         "eth_dst": eth_dsts[i]
+                            },
+                      "actions":[
+                            
+                      ]
+                    }
+            response = requests.post(url,data=json.dumps(payload))
+            self.logger.info(response.text)
+
+            payload = {
+                      "dpid": 2,
+                      "table_id": 0,
+                      "priority": 32768,
+                      "match": {
+                         "in_port": port,
+                         "eth_dst": eth_dsts[i]
+                            },
+                      "actions":[
+                      ]
+                    }
+            response = requests.post(url,data=json.dumps(payload))
+            self.logger.info(response.text)
+
+    #def installRoutes(self,ipToLoadBalance):
+        
+
+    def getMacsOfSwitch(self, dpid):
+        url = 'http://localhost:8080/stats/portdesc/'+dpid
+        response = requests.get(url)
+        temp2={}
+        if (response.text):
+            portdescarrays = ast.literal_eval(response.text)[dpid]
+            for temp in portdescarrays:
+                temp2[temp['port_no']] = temp['hw_addr']
+            return temp2
+
+
+    def installBalancingRoutes(self,remove=False):
+        out_port = 2
+        if remove:
+            out_port = 1
+        url = 'http://localhost:8080/stats/flowentry/add'
+        payload = {
+                  "dpid": 2,
+                  "table_id": 0,
+                  "priority": 32768,
+                  "match": {
+                     "eth_dst": "00:00:00:00:00:12",
+                     "in_port":4
+                        },
+                  "actions":[ 
+                     {"type":"OUTPUT",
+                     "port": out_port}
+                  ]
+                }
+        response = requests.post(url,data=json.dumps(payload))
+        self.logger.info(response.text)
+
+    
+        url = 'http://localhost:8080/stats/flowentry/add'
+        payload = {
+                  "dpid": 1,
+                  "table_id": 0,
+                  "priority": 32768,
+                  "match": {
+                     "eth_dst": "00:00:00:00:00:24",
+                     "in_port":4
+                        },
+                  "actions":[
+                     {"type":"OUTPUT",
+                     "port": out_port}
+                  ]
+                }
+        response = requests.post(url,data=json.dumps(payload))
+        self.logger.info(response.text)
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
@@ -83,13 +186,34 @@ class SimpleSwitch13(app_manager.RyuApp):
         dst = eth.dst
         src = eth.src
 
+
+
         dpid = datapath.id
         self.mac_to_port.setdefault(dpid, {})
 
-        self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
+          # self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
 
         # learn a mac address to avoid FLOOD next time.
         self.mac_to_port[dpid][src] = in_port
+        
+        ####testing 
+                    
+
+        ####
+
+        """
+        ##testing
+        if in_port == 1 and not(src in self.macsOfSwitch.values()) :
+            self.mach1 = src
+            self.logger.info(src)
+        elif in_port == 2 and not(src in self.macsOfSwitch.values()) :
+            self.mach2 = src
+            self.logger.info(src)
+
+        if self.mach1!="" and self.mach2!="" and not(self.routeInstalled):
+            self.installRoutes("10.0.0.1")
+        """
+
 
         if dst in self.mac_to_port[dpid]:
             out_port = self.mac_to_port[dpid][dst]

@@ -32,8 +32,15 @@ from ryu.ofproto import ether
 from ryu.ofproto import ofproto_v1_0, ofproto_v1_3
 from ryu.lib import dpid as dpid_lib
 
+import custom_event
+
 
 class HostTracker(app_manager.RyuApp):
+
+    _EVENTS =  [custom_event.NewHostEvent]
+
+
+
     def __init__(self, *args, **kwargs):
         super(HostTracker, self).__init__(*args, **kwargs)
         self.hosts = {}
@@ -73,9 +80,9 @@ class HostTracker(app_manager.RyuApp):
         return False
 
     def updateHostTable(self, srcIP, dpid, port):
-        self.hosts[srcIP]['timestamp'] = int(time.time())
-        self.hosts[srcIP]['dpid'] = dpid
-        self.hosts[srcIP]['port'] = port
+        self.hosts[dpid][srcIP]['timestamp'] = int(time.time())
+        self.hosts[dpid][srcIP]['dpid'] = dpid
+        self.hosts[dpid][srcIP]['port'] = port
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
@@ -87,13 +94,17 @@ class HostTracker(app_manager.RyuApp):
 
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocols(ethernet.ethernet)[0]
-
-        print eth.ethertype
-        print "----"
+            
         if eth.ethertype == ether.ETH_TYPE_ARP:
             arp_pkt = pkt.get_protocols(arp.arp)[0]
             srcMac = arp_pkt.src_mac
             srcIP = arp_pkt.src_ip
+
+
+            self.logger.info("dpid "+dpid_lib.dpid_to_str(datapath.id))
+            self.logger.info("srcIP "+srcIP)
+            self.logger.info("srcMac "+srcMac)
+
         elif eth.ethertype == ether.ETH_TYPE_IP:
             ip = pkt.get_protocols(ipv4.ipv4)[0]
             srcMac = eth.src
@@ -101,14 +112,24 @@ class HostTracker(app_manager.RyuApp):
         else:
             return
         
-        if self.isRouter(srcMac):
-            return
+        #if self.isRouter(srcMac):
+        #    return
 
-        if srcIP not in self.hosts:
-            self.hosts[srcIP] = {}
+        if datapath.id not in self.hosts:
+            self.hosts[datapath.id] = {}
 
         # Always update MAC and switch-port location, just in case
         # DHCP reassigned the IP or the host moved
-        self.hosts[srcIP]['mac'] = srcMac
-        self.updateHostTable(srcIP, dpid_lib.dpid_to_str(datapath.id), in_port)
+        if in_port != 1 and in_port != 2:
+            if srcIP not in self.hosts[datapath.id]:
+                #self.hosts[srcIP] = {}
+                self.hosts[datapath.id][srcIP] = {}
 
+
+            self.hosts[datapath.id][srcIP]['mac'] = srcMac
+            #self.updateHostTable(srcIP, dpid_lib.dpid_to_str(datapath.id), in_port)
+            self.updateHostTable(srcIP, datapath.id, in_port)
+
+            #insert route for balancing here, or generate event is better
+            #self.send_event_to_observers(custom_event.NewHostEvent(srcMac,dpid_lib.dpid_to_str(datapath.id), in_port,self.hosts))
+            self.send_event_to_observers(custom_event.NewHostEvent(srcMac,datapath.id, in_port,self.hosts))
